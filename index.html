@@ -1,0 +1,1299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ant Colony Simulation</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+            background-color: #333;
+            color: white;
+        }
+        #simulation-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        #canvas-container {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+        canvas {
+            background-color: #594b32;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+        #controls {
+            padding: 10px;
+            background-color: #222;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+        }
+        button {
+            padding: 6px 12px;
+            background-color: #555;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #777;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-right: 10px;
+        }
+        #stats {
+            padding: 10px;
+            background-color: rgba(0, 0, 0, 0.7);
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            border-radius: 4px;
+            font-size: 14px;
+            z-index: 10;
+            max-width: 220px;
+        }
+    </style>
+</head>
+<body>
+    <div id="simulation-container">
+        <div id="canvas-container">
+            <canvas id="simulation"></canvas>
+            <div id="stats">
+                <p><strong>Colony Stats:</strong></p>
+                <p>Worker Ants: <span id="worker-count">0</span></p>
+                <p>Soldier Ants: <span id="soldier-count">0</span></p>
+                <p>Food Stored: <span id="food-stored">0</span></p>
+                <p>Queen Health: <span id="queen-health">100</span>%</p>
+                <p>Predators: <span id="predator-count">0</span></p>
+                <p>Simulation Speed: <span id="sim-speed">1</span>x</p>
+            </div>
+        </div>
+        <div id="controls">
+            <div class="control-group">
+                <button id="start-btn">Start</button>
+                <button id="pause-btn">Pause</button>
+                <button id="reset-btn">Reset</button>
+            </div>
+            <div class="control-group">
+                <label for="speed-slider">Speed:</label>
+                <input type="range" id="speed-slider" min="0.5" max="3" step="0.5" value="1">
+            </div>
+            <div class="control-group">
+                <button id="add-food-btn">Add Food</button>
+                <button id="add-obstacle-btn">Add Obstacle</button>
+                <button id="add-predator-btn">Add Predator</button>
+            </div>
+            <div class="control-group">
+                <label for="show-pheromones">Show Pheromones:</label>
+                <input type="checkbox" id="show-pheromones" checked>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Constants and configuration
+        const config = {
+            antSize: 3,
+            workerSpeed: 1,
+            soldierSpeed: 0.8,
+            predatorSpeed: 1.2,
+            pheromoneRate: 0.8,
+            pheromoneEvaporationRate: 0.995,
+            foodPheromoneColor: 'rgba(0, 255, 0, 0.1)',
+            homePheromoneColor: 'rgba(0, 0, 255, 0.1)',
+            dangerPheromoneColor: 'rgba(255, 0, 0, 0.2)',
+            foodColor: '#3CB371',
+            obstacleColor: '#8B4513',
+            nestColor: '#A0522D',
+            nestRadius: 20,
+            initialWorkerAnts: 25,
+            initialSoldierAnts: 5,
+            foodClusterSize: 70,
+            foodDensity: 0.6,
+            minFoodPerCluster: 100,
+            maxFoodPerCluster: 300,
+            predatorSpawnRate: 0.001,
+            predatorLifespan: 1000,
+            queenLayRate: 0.05,
+            foodConsumptionRate: 0.1,
+            collisionRadius: 5,
+            randomMovementFactor: 0.3,
+            maxPheromoneIntensity: 1.0,
+            sensorDistance: 10,
+            sensorAngle: Math.PI / 4,
+            predatorDetectionRadius: 50,
+            dangerPheromoneLifespan: 500,
+            breedingCost: 5,
+            antMaturationTime: 200,
+            soldierRatio: 0.2,
+            queenHealthDecayRate: 0.01,
+            queenHealRate: 0.1
+        };
+
+        // Get canvas and setup
+        const canvas = document.getElementById('simulation');
+        const ctx = canvas.getContext('2d');
+        let width, height;
+        let animationId;
+        let isPaused = true;
+        let simulationSpeed = 1;
+        let showPheromones = true;
+        let currentMode = 'none';
+
+        // Simulation state
+        let ants = [];
+        let larvae = [];
+        let food = [];
+        let obstacles = [];
+        let predators = [];
+        let foodPheromones = [];
+        let homePheromones = [];
+        let dangerPheromones = [];
+        let nest;
+        let queen;
+        let foodStored = 0;
+        let simulationTick = 0;
+
+        // Stats elements
+        const workerCountEl = document.getElementById('worker-count');
+        const soldierCountEl = document.getElementById('soldier-count');
+        const foodStoredEl = document.getElementById('food-stored');
+        const queenHealthEl = document.getElementById('queen-health');
+        const predatorCountEl = document.getElementById('predator-count');
+        const simSpeedEl = document.getElementById('sim-speed');
+
+        // UI controls
+        const startBtn = document.getElementById('start-btn');
+        const pauseBtn = document.getElementById('pause-btn');
+        const resetBtn = document.getElementById('reset-btn');
+        const speedSlider = document.getElementById('speed-slider');
+        const addFoodBtn = document.getElementById('add-food-btn');
+        const addObstacleBtn = document.getElementById('add-obstacle-btn');
+        const addPredatorBtn = document.getElementById('add-predator-btn');
+        const showPheromonesCheckbox = document.getElementById('show-pheromones');
+
+        // Initialize the simulation
+        function init() {
+            // Setup canvas size
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+
+            // Create the nest and queen
+            nest = {
+                x: width / 2,
+                y: height / 2,
+                radius: config.nestRadius
+            };
+
+            queen = {
+                x: nest.x,
+                y: nest.y,
+                size: config.antSize * 3,
+                health: 100,
+                lastBreedTime: 0
+            };
+
+            // Create initial ants
+            createInitialAnts();
+
+            // Create food clusters
+            createFoodClusters(3);
+
+            // Add an initial predator
+            addPredator();
+
+            // Add some obstacles
+            createRandomObstacles(5);
+
+            // Setup event listeners
+            setupEventListeners();
+
+            // Initial render
+            render();
+        }
+
+        // Resize canvas to fit window
+        function resizeCanvas() {
+            width = canvas.width = window.innerWidth - 40;
+            height = canvas.height = window.innerHeight - 100;
+        }
+
+        // Create initial ant population
+        function createInitialAnts() {
+            for (let i = 0; i < config.initialWorkerAnts; i++) {
+                addAnt('worker');
+            }
+            for (let i = 0; i < config.initialSoldierAnts; i++) {
+                addAnt('soldier');
+            }
+        }
+
+        // Add a new ant
+        function addAnt(type) {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = config.nestRadius * Math.random();
+            const x = nest.x + Math.cos(angle) * distance;
+            const y = nest.y + Math.sin(angle) * distance;
+            
+            ants.push({
+                x: x,
+                y: y,
+                angle: Math.random() * Math.PI * 2,
+                type: type,
+                state: 'exploring',
+                carryingFood: false,
+                targetX: null,
+                targetY: null,
+                age: 0,
+                health: 100,
+                sensed: {
+                    foodPheromone: 0,
+                    homePheromone: 0,
+                    dangerPheromone: 0,
+                    food: null,
+                    predator: null
+                }
+            });
+        }
+
+        // Create a food cluster
+        function createFoodCluster(x, y, size, amount) {
+            const foodPoints = [];
+            const radius = size / 2;
+            
+            for (let i = 0; i < amount; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const distance = Math.random() * radius;
+                const foodX = x + Math.cos(angle) * distance;
+                const foodY = y + Math.sin(angle) * distance;
+                
+                if (Math.random() < config.foodDensity) {
+                    foodPoints.push({
+                        x: foodX,
+                        y: foodY,
+                        amount: Math.floor(Math.random() * 5) + 1
+                    });
+                }
+            }
+            
+            food.push(...foodPoints);
+        }
+
+        // Create multiple food clusters
+        function createFoodClusters(count) {
+            for (let i = 0; i < count; i++) {
+                const x = Math.random() * width;
+                const y = Math.random() * height;
+                const size = config.foodClusterSize;
+                const amount = Math.floor(Math.random() * (config.maxFoodPerCluster - config.minFoodPerCluster)) + config.minFoodPerCluster;
+                createFoodCluster(x, y, size, amount);
+            }
+        }
+
+        // Add a predator
+        function addPredator() {
+            // Position predator at the edge of the canvas
+            let x, y;
+            const side = Math.floor(Math.random() * 4);
+            
+            switch (side) {
+                case 0: // Top
+                    x = Math.random() * width;
+                    y = 0;
+                    break;
+                case 1: // Right
+                    x = width;
+                    y = Math.random() * height;
+                    break;
+                case 2: // Bottom
+                    x = Math.random() * width;
+                    y = height;
+                    break;
+                case 3: // Left
+                    x = 0;
+                    y = Math.random() * height;
+                    break;
+            }
+            
+            predators.push({
+                x: x,
+                y: y,
+                angle: Math.random() * Math.PI * 2,
+                size: config.antSize * 4,
+                speed: config.predatorSpeed,
+                lifespan: config.predatorLifespan,
+                target: null,
+                health: 100
+            });
+        }
+
+        // Create random obstacles
+        function createRandomObstacles(count) {
+            for (let i = 0; i < count; i++) {
+                const x = Math.random() * width;
+                const y = Math.random() * height;
+                const radius = Math.random() * 30 + 10;
+                
+                // Don't place obstacles over the nest
+                const distToNest = distance(x, y, nest.x, nest.y);
+                if (distToNest > nest.radius + radius) {
+                    obstacles.push({
+                        x: x,
+                        y: y,
+                        radius: radius
+                    });
+                }
+            }
+        }
+
+        // Calculate distance between two points
+        function distance(x1, y1, x2, y2) {
+            return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+        }
+
+        // Setup event listeners
+        function setupEventListeners() {
+            startBtn.addEventListener('click', startSimulation);
+            pauseBtn.addEventListener('click', pauseSimulation);
+            resetBtn.addEventListener('click', resetSimulation);
+            speedSlider.addEventListener('input', updateSpeed);
+            showPheromonesCheckbox.addEventListener('change', togglePheromones);
+            
+            addFoodBtn.addEventListener('click', () => {
+                currentMode = currentMode === 'addFood' ? 'none' : 'addFood';
+                resetButtons();
+                if (currentMode === 'addFood') {
+                    addFoodBtn.style.backgroundColor = '#4CAF50';
+                }
+            });
+            
+            addObstacleBtn.addEventListener('click', () => {
+                currentMode = currentMode === 'addObstacle' ? 'none' : 'addObstacle';
+                resetButtons();
+                if (currentMode === 'addObstacle') {
+                    addObstacleBtn.style.backgroundColor = '#4CAF50';
+                }
+            });
+            
+            addPredatorBtn.addEventListener('click', () => {
+                addPredator();
+            });
+            
+            canvas.addEventListener('click', handleCanvasClick);
+        }
+
+        // Handle canvas click
+        function handleCanvasClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            if (currentMode === 'addFood') {
+                createFoodCluster(x, y, 60, 50);
+            } else if (currentMode === 'addObstacle') {
+                obstacles.push({
+                    x: x,
+                    y: y,
+                    radius: 15
+                });
+            }
+        }
+
+        // Reset button styles
+        function resetButtons() {
+            addFoodBtn.style.backgroundColor = '';
+            addObstacleBtn.style.backgroundColor = '';
+        }
+
+        // Start simulation
+        function startSimulation() {
+            if (isPaused) {
+                isPaused = false;
+                animate();
+            }
+        }
+
+        // Pause simulation
+        function pauseSimulation() {
+            isPaused = true;
+            cancelAnimationFrame(animationId);
+        }
+
+        // Reset simulation
+        function resetSimulation() {
+            pauseSimulation();
+            ants = [];
+            larvae = [];
+            food = [];
+            obstacles = [];
+            predators = [];
+            foodPheromones = [];
+            homePheromones = [];
+            dangerPheromones = [];
+            foodStored = 0;
+            simulationTick = 0;
+            
+            init();
+        }
+
+        // Update simulation speed
+        function updateSpeed() {
+            simulationSpeed = parseFloat(speedSlider.value);
+            simSpeedEl.textContent = simulationSpeed.toFixed(1);
+        }
+
+        // Toggle pheromone visibility
+        function togglePheromones() {
+            showPheromones = showPheromonesCheckbox.checked;
+        }
+
+        // Main animation loop
+        function animate() {
+            if (!isPaused) {
+                for (let i = 0; i < simulationSpeed; i++) {
+                    update();
+                }
+                render();
+                animationId = requestAnimationFrame(animate);
+            }
+        }
+
+        // Update simulation state
+        function update() {
+            simulationTick++;
+            
+            // Update queen
+            updateQueen();
+            
+            // Update larvae
+            updateLarvae();
+            
+            // Update ants
+            updateAnts();
+            
+            // Update pheromones
+            updatePheromones();
+            
+            // Update predators
+            updatePredators();
+            
+            // Random events
+            handleRandomEvents();
+            
+            // Update stats
+            updateStats();
+        }
+
+        // Update queen state
+        function updateQueen() {
+            // Queen lays eggs based on food and health
+            if (foodStored >= config.breedingCost && 
+                queen.health > 50 && 
+                simulationTick - queen.lastBreedTime > 60) {
+                // Create a new larva
+                larvae.push({
+                    x: nest.x + (Math.random() * 10 - 5),
+                    y: nest.y + (Math.random() * 10 - 5),
+                    age: 0,
+                    type: Math.random() < config.soldierRatio ? 'soldier' : 'worker'
+                });
+                
+                // Consume food
+                foodStored -= config.breedingCost;
+                queen.lastBreedTime = simulationTick;
+            }
+            
+            // Queen health decays over time
+            queen.health -= config.queenHealthDecayRate;
+            
+            // Queen can heal if there's food
+            if (foodStored > 0 && queen.health < 100) {
+                queen.health += config.queenHealRate;
+                foodStored -= 0.1;
+            }
+            
+            // Keep health within bounds
+            queen.health = Math.max(0, Math.min(100, queen.health));
+        }
+
+        // Update larvae state
+        function updateLarvae() {
+            for (let i = larvae.length - 1; i >= 0; i--) {
+                const larva = larvae[i];
+                larva.age++;
+                
+                // When larvae mature, they become ants
+                if (larva.age >= config.antMaturationTime) {
+                    addAnt(larva.type);
+                    larvae.splice(i, 1);
+                }
+            }
+        }
+
+        // Update ants state
+        function updateAnts() {
+            for (let i = ants.length - 1; i >= 0; i--) {
+                const ant = ants[i];
+                
+                // Update ant age
+                ant.age++;
+                
+                // Sense environment
+                senseEnvironment(ant);
+                
+                // Make decisions based on type and state
+                if (ant.type === 'worker') {
+                    updateWorkerAnt(ant);
+                } else if (ant.type === 'soldier') {
+                    updateSoldierAnt(ant);
+                }
+                
+                // Move ant
+                moveAnt(ant);
+                
+                // Check for food collection
+                if (ant.type === 'worker' && !ant.carryingFood) {
+                    collectFood(ant);
+                }
+                
+                // Drop food at nest
+                if (ant.carryingFood && distance(ant.x, ant.y, nest.x, nest.y) < nest.radius) {
+                    ant.carryingFood = false;
+                    ant.state = 'exploring';
+                    foodStored++;
+                }
+                
+                // Deposit pheromones
+                depositPheromones(ant);
+                
+                // Handle predator interactions
+                handlePredatorInteractions(ant, i);
+            }
+        }
+
+        // Update worker ant behavior
+        function updateWorkerAnt(ant) {
+            if (ant.carryingFood) {
+                // If carrying food, head back to nest
+                ant.state = 'returning';
+                
+                // Follow home pheromones or head toward nest
+                if (ant.sensed.homePheromone > 0.1) {
+                    // Follow the home pheromone gradient
+                    const angle = Math.atan2(ant.sensed.homePheromoneY - ant.y, ant.sensed.homePheromoneX - ant.x);
+                    ant.angle = adjustAngle(ant.angle, angle, 0.2);
+                } else {
+                    // Head directly to nest
+                    const angle = Math.atan2(nest.y - ant.y, nest.x - ant.x);
+                    ant.angle = adjustAngle(ant.angle, angle, 0.1);
+                }
+            } else if (ant.state === 'exploring') {
+                // If exploring, look for food or follow food pheromones
+                if (ant.sensed.foodPheromone > 0.1) {
+                    // Follow the food pheromone gradient
+                    const angle = Math.atan2(ant.sensed.foodPheromoneY - ant.y, ant.sensed.foodPheromoneX - ant.x);
+                    ant.angle = adjustAngle(ant.angle, angle, 0.2);
+                } else if (ant.sensed.food) {
+                    // Head toward food
+                    const angle = Math.atan2(ant.sensed.food.y - ant.y, ant.sensed.food.x - ant.x);
+                    ant.angle = adjustAngle(ant.angle, angle, 0.3);
+                } else {
+                    // Random movement with some persistence
+                    ant.angle += (Math.random() - 0.5) * config.randomMovementFactor;
+                }
+            } else if (ant.state === 'returning') {
+                // If returning without food, head back to exploring
+                ant.state = 'exploring';
+            }
+            
+            // Avoid dangers
+            avoidDangers(ant);
+        }
+
+        // Update soldier ant behavior
+        function updateSoldierAnt(ant) {
+            // Soldiers patrol and protect
+            if (ant.sensed.predator) {
+                // Attack predator
+                ant.state = 'attacking';
+                const angle = Math.atan2(ant.sensed.predator.y - ant.y, ant.sensed.predator.x - ant.x);
+                ant.angle = adjustAngle(ant.angle, angle, 0.4);
+            } else if (ant.sensed.dangerPheromone > 0.2) {
+                // Follow danger pheromones
+                ant.state = 'defending';
+                const angle = Math.atan2(ant.sensed.dangerPheromoneY - ant.y, ant.sensed.dangerPheromoneX - ant.x);
+                ant.angle = adjustAngle(ant.angle, angle, 0.3);
+            } else {
+                // Patrol around nest
+                ant.state = 'patrolling';
+                
+                // Either follow a patrol path or random movement
+                if (Math.random() < 0.7) {
+                    const patrolRadius = nest.radius * 2;
+                    const nestAngle = Math.atan2(nest.y - ant.y, nest.x - ant.x);
+                    const distToNest = distance(ant.x, ant.y, nest.x, nest.y);
+                    
+                    if (distToNest > patrolRadius) {
+                        // Head back toward nest
+                        ant.angle = adjustAngle(ant.angle, nestAngle, 0.1);
+                    } else {
+                        // Orbit around nest
+                        ant.angle = adjustAngle(ant.angle, nestAngle + Math.PI/2, 0.05);
+                    }
+                } else {
+                    // Random movement
+                    ant.angle += (Math.random() - 0.5) * config.randomMovementFactor;
+                }
+            }
+        }
+
+        // Move ant based on its angle and speed
+        function moveAnt(ant) {
+            const speed = ant.type === 'worker' ? config.workerSpeed : config.soldierSpeed;
+            
+            // Calculate new position
+            let newX = ant.x + Math.cos(ant.angle) * speed;
+            let newY = ant.y + Math.sin(ant.angle) * speed;
+            
+            // Bounce off canvas boundaries
+            if (newX < 0 || newX > width) {
+                ant.angle = Math.PI - ant.angle;
+                newX = ant.x;
+            }
+            if (newY < 0 || newY > height) {
+                ant.angle = -ant.angle;
+                newY = ant.y;
+            }
+            
+            // Check obstacle collisions
+            for (const obstacle of obstacles) {
+                const dist = distance(newX, newY, obstacle.x, obstacle.y);
+                if (dist < obstacle.radius + config.antSize) {
+                    // Bounce off obstacle
+                    const toObstacle = Math.atan2(obstacle.y - ant.y, obstacle.x - ant.x);
+                    ant.angle = toObstacle + Math.PI + (Math.random() - 0.5) * 0.5;
+                    newX = ant.x;
+                    newY = ant.y;
+                    break;
+                }
+            }
+            
+            // Update position
+            ant.x = newX;
+            ant.y = newY;
+        }
+
+        // Sense the environment around the ant
+        function senseEnvironment(ant) {
+            // Reset sensed values
+            ant.sensed = {
+                foodPheromone: 0,
+                homePheromone: 0,
+                dangerPheromone: 0,
+                food: null,
+                predator: null,
+                foodPheromoneX: 0,
+                foodPheromoneY: 0,
+                homePheromoneX: 0,
+                homePheromoneY: 0,
+                dangerPheromoneX: 0,
+                dangerPheromoneY: 0
+            };
+            
+            // Create sensor points ahead and to sides
+            const sensors = [
+                {
+                    angle: ant.angle,
+                    weight: 1.0
+                },
+                {
+                    angle: ant.angle + config.sensorAngle,
+                    weight: 0.7
+                },
+                {
+                    angle: ant.angle - config.sensorAngle,
+                    weight: 0.7
+                }
+            ];
+            
+            // Check each sensor
+            for (const sensor of sensors) {
+                const sensorX = ant.x + Math.cos(sensor.angle) * config.sensorDistance;
+                const sensorY = ant.y + Math.sin(sensor.angle) * config.sensorDistance;
+                
+                // Sense food pheromones
+                for (const pheromone of foodPheromones) {
+                    const dist = distance(sensorX, sensorY, pheromone.x, pheromone.y);
+                    if (dist < pheromone.intensity * 15) {
+                        const intensity = pheromone.intensity * sensor.weight * (1 - dist / (pheromone.intensity * 15));
+                        if (intensity > ant.sensed.foodPheromone) {
+                            ant.sensed.foodPheromone = intensity;
+                            ant.sensed.foodPheromoneX = pheromone.x;
+                            ant.sensed.foodPheromoneY = pheromone.y;
+                        }
+                    }
+                }
+                
+                // Sense home pheromones
+                for (const pheromone of homePheromones) {
+                    const dist = distance(sensorX, sensorY, pheromone.x, pheromone.y);
+                    if (dist < pheromone.intensity * 15) {
+                        const intensity = pheromone.intensity * sensor.weight * (1 - dist / (pheromone.intensity * 15));
+                        if (intensity > ant.sensed.homePheromone) {
+                            ant.sensed.homePheromone = intensity;
+                            ant.sensed.homePheromoneX = pheromone.x;
+                            ant.sensed.homePheromoneY = pheromone.y;
+                        }
+                    }
+                }
+                
+                // Sense danger pheromones
+                for (const pheromone of dangerPheromones) {
+                    const dist = distance(sensorX, sensorY, pheromone.x, pheromone.y);
+                    if (dist < pheromone.intensity * 20) {
+                        const intensity = pheromone.intensity * sensor.weight * (1 - dist / (pheromone.intensity * 20));
+                        if (intensity > ant.sensed.dangerPheromone) {
+                            ant.sensed.dangerPheromone = intensity;
+                            ant.sensed.dangerPheromoneX = pheromone.x;
+                            ant.sensed.dangerPheromoneY = pheromone.y;
+                        }
+                    }
+                }
+                
+                // Sense food
+                if (!ant.carryingFood && ant.type === 'worker') {
+                    for (const f of food) {
+                        const dist = distance(sensorX, sensorY, f.x, f.y);
+                        if (dist < 15) {
+                            ant.sensed.food = f;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // Sense predators (all around, not just in front)
+            for (const predator of predators) {
+                const dist = distance(ant.x, ant.y, predator.x, predator.y);
+                if (dist < config.predatorDetectionRadius) {
+                    ant.sensed.predator = predator;
+                    break;
+                }
+            }
+        }
+
+        // Adjust angle toward a target angle with a weight
+        function adjustAngle(currentAngle, targetAngle, weight) {
+            let delta = targetAngle - currentAngle;
+            
+            // Normalize delta to [-PI, PI]
+            while (delta > Math.PI) delta -= 2 * Math.PI;
+            while (delta < -Math.PI) delta += 2 * Math.PI;
+            
+            return currentAngle + delta * weight;
+        }
+
+        // Collect food if the ant is close to it
+        function collectFood(ant) {
+            for (let i = 0; i < food.length; i++) {
+                const f = food[i];
+                const dist = distance(ant.x, ant.y, f.x, f.y);
+                
+                if (dist < config.collisionRadius) {
+                    ant.carryingFood = true;
+                    ant.state = 'returning';
+                    
+                    // Reduce food amount or remove it
+                    f.amount--;
+                    if (f.amount <= 0) {
+                        food.splice(i, 1);
+                    }
+                    
+                    break;
+                }
+            }
+        }
+
+        // Deposit pheromones based on ant state
+        function depositPheromones(ant) {
+            if (ant.carryingFood) {
+                // Drop food pheromones when returning with food
+                foodPheromones.push({
+                    x: ant.x,
+                    y: ant.y,
+                    intensity: config.pheromoneRate
+                });
+            } else if (distance(ant.x, ant.y, nest.x, nest.y) < nest.radius * 3) {
+                // Drop home pheromones near the nest
+                homePheromones.push({
+                    x: ant.x,
+                    y: ant.y,
+                    intensity: config.pheromoneRate * 0.8
+                });
+            }
+            
+            // Soldiers deposit danger pheromones when they detect predators
+            if (ant.type === 'soldier' && ant.sensed.predator) {
+                dangerPheromones.push({
+                    x: ant.x,
+                    y: ant.y,
+                    intensity: config.pheromoneRate * 1.2,
+                    lifespan: config.dangerPheromoneLifespan
+                });
+            }
+        }
+
+        // Update pheromones (evaporation)
+        function updatePheromones() {
+            // Update food pheromones
+            for (let i = foodPheromones.length - 1; i >= 0; i--) {
+                foodPheromones[i].intensity *= config.pheromoneEvaporationRate;
+                if (foodPheromones[i].intensity < 0.01) {
+                    foodPheromones.splice(i, 1);
+                }
+            }
+            
+            // Update home pheromones
+            for (let i = homePheromones.length - 1; i >= 0; i--) {
+                homePheromones[i].intensity *= config.pheromoneEvaporationRate;
+                if (homePheromones[i].intensity < 0.01) {
+                    homePheromones.splice(i, 1);
+                }
+            }
+            
+            // Update danger pheromones
+            for (let i = dangerPheromones.length - 1; i >= 0; i--) {
+                dangerPheromones[i].intensity *= config.pheromoneEvaporationRate;
+                dangerPheromones[i].lifespan--;
+                if (dangerPheromones[i].intensity < 0.01 || dangerPheromones[i].lifespan <= 0) {
+                    dangerPheromones.splice(i, 1);
+                }
+            }
+            
+            // Limit number of pheromones for performance
+            const maxPheromones = 2000;
+            if (foodPheromones.length > maxPheromones) {
+                foodPheromones.splice(0, foodPheromones.length - maxPheromones);
+            }
+            if (homePheromones.length > maxPheromones) {
+                homePheromones.splice(0, homePheromones.length - maxPheromones);
+            }
+            if (dangerPheromones.length > maxPheromones) {
+                dangerPheromones.splice(0, dangerPheromones.length - maxPheromones);
+            }
+        }
+
+        // Update predators
+        function updatePredators() {
+            for (let i = predators.length - 1; i >= 0; i--) {
+                const predator = predators[i];
+                
+                // Decrease lifespan
+                predator.lifespan--;
+                
+                // Remove predator if lifespan depleted or health is zero
+                if (predator.lifespan <= 0 || predator.health <= 0) {
+                    predators.splice(i, 1);
+                    continue;
+                }
+                
+                // Find target if none exists
+                if (!predator.target) {
+                    // Look for nearby ants
+                    let closestAnt = null;
+                    let closestDistance = Infinity;
+                    
+                    for (const ant of ants) {
+                        const dist = distance(predator.x, predator.y, ant.x, ant.y);
+                        if (dist < closestDistance) {
+                            closestDistance = dist;
+                            closestAnt = ant;
+                        }
+                    }
+                    
+                    // If ant is close enough, target it
+                    if (closestAnt && closestDistance < 150) {
+                        predator.target = closestAnt;
+                    } else {
+                        // Move toward nest if no ants are nearby
+                        const nestDist = distance(predator.x, predator.y, nest.x, nest.y);
+                        if (nestDist > 50) {
+                            const angle = Math.atan2(nest.y - predator.y, nest.x - predator.x);
+                            predator.angle = adjustAngle(predator.angle, angle, 0.05);
+                        } else {
+                            // Random movement near nest
+                            predator.angle += (Math.random() - 0.5) * 0.2;
+                        }
+                    }
+                } else {
+                    // Chase target
+                    const targetDist = distance(predator.x, predator.y, predator.target.x, predator.target.y);
+                    
+                    if (targetDist < 5) {
+                        // Attack ant if close enough
+                        if (predator.target.type === 'worker') {
+                            // Workers are removed immediately
+                            const index = ants.indexOf(predator.target);
+                            if (index !== -1) {
+                                ants.splice(index, 1);
+                            }
+                        } else {
+                            // Soldiers fight back
+                            predator.health -= 10;
+                            predator.target.health -= 20;
+                            
+                            // Remove soldier if health depleted
+                            if (predator.target.health <= 0) {
+                                const index = ants.indexOf(predator.target);
+                                if (index !== -1) {
+                                    ants.splice(index, 1);
+                                }
+                            }
+                        }
+                        
+                        // Reset target
+                        predator.target = null;
+                    } else {
+                        // Move toward target
+                        const angle = Math.atan2(predator.target.y - predator.y, predator.target.x - predator.x);
+                        predator.angle = adjustAngle(predator.angle, angle, 0.1);
+                    }
+                }
+                
+                // Move predator
+                predator.x += Math.cos(predator.angle) * predator.speed;
+                predator.y += Math.sin(predator.angle) * predator.speed;
+                
+                // Bounce off edges
+                if (predator.x < 0 || predator.x > width) {
+                    predator.angle = Math.PI - predator.angle;
+                }
+                if (predator.y < 0 || predator.y > height) {
+                    predator.angle = -predator.angle;
+                }
+            }
+        }
+
+        // Handle predator interactions for an ant
+        function handlePredatorInteractions(ant, antIndex) {
+            // For each predator, check if ant is too close
+            for (const predator of predators) {
+                const dist = distance(ant.x, ant.y, predator.x, predator.y);
+                
+                if (dist < predator.size) {
+                    if (ant.type === 'worker') {
+                        // Workers die immediately
+                        ants.splice(antIndex, 1);
+                        return;
+                    } else {
+                        // Soldiers fight back
+                        predator.health -= 2;
+                        ant.health -= 5;
+                        
+                        // Remove soldier if health depleted
+                        if (ant.health <= 0) {
+                            ants.splice(antIndex, 1);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Avoid dangers (obstacles, predators, danger pheromones)
+        function avoidDangers(ant) {
+            // If predator is detected, avoid it
+            if (ant.sensed.predator) {
+                const predator = ant.sensed.predator;
+                const avoidAngle = Math.atan2(ant.y - predator.y, ant.x - predator.x);
+                
+                if (ant.type === 'worker') {
+                    // Workers run away
+                    ant.angle = adjustAngle(ant.angle, avoidAngle, 0.5);
+                }
+            }
+            
+            // Avoid high danger pheromone areas
+            if (ant.sensed.dangerPheromone > 0.3 && ant.type === 'worker') {
+                const avoidAngle = Math.atan2(ant.y - ant.sensed.dangerPheromoneY, ant.x - ant.sensed.dangerPheromoneX);
+                ant.angle = adjustAngle(ant.angle, avoidAngle, 0.3);
+            }
+        }
+
+        // Handle random events (predator spawning, food growth, etc.)
+        function handleRandomEvents() {
+            // Random predator spawning
+            if (Math.random() < config.predatorSpawnRate * simulationSpeed && predators.length < 3) {
+                addPredator();
+            }
+            
+            // Occasionally grow new food
+            if (Math.random() < 0.0002 * simulationSpeed && food.length < 500) {
+                // Find a spot away from the nest
+                let x, y;
+                do {
+                    x = Math.random() * width;
+                    y = Math.random() * height;
+                } while (distance(x, y, nest.x, nest.y) < nest.radius * 3);
+                
+                createFoodCluster(x, y, 40, 20);
+            }
+            
+            // Consume stored food
+            if (foodStored > 0 && Math.random() < config.foodConsumptionRate) {
+                foodStored -= 0.1;
+            }
+        }
+
+        // Update stats display
+        function updateStats() {
+            const workerCount = ants.filter(ant => ant.type === 'worker').length;
+            const soldierCount = ants.filter(ant => ant.type === 'soldier').length;
+            
+            workerCountEl.textContent = workerCount;
+            soldierCountEl.textContent = soldierCount;
+            foodStoredEl.textContent = Math.floor(foodStored);
+            queenHealthEl.textContent = Math.floor(queen.health);
+            predatorCountEl.textContent = predators.length;
+            simSpeedEl.textContent = simulationSpeed.toFixed(1);
+        }
+
+        // Render the simulation
+        function render() {
+            // Clear canvas
+            ctx.clearRect(0, 0, width, height);
+            
+            // Draw pheromones
+            if (showPheromones) {
+                renderPheromones();
+            }
+            
+            // Draw food
+            renderFood();
+            
+            // Draw obstacles
+            renderObstacles();
+            
+            // Draw nest
+            renderNest();
+            
+            // Draw queen
+            renderQueen();
+            
+            // Draw ants
+            renderAnts();
+            
+            // Draw larvae
+            renderLarvae();
+            
+            // Draw predators
+            renderPredators();
+        }
+
+        // Render pheromones
+        function renderPheromones() {
+            // Draw food pheromones
+            for (const pheromone of foodPheromones) {
+                const radius = pheromone.intensity * 5;
+                ctx.beginPath();
+                ctx.arc(pheromone.x, pheromone.y, radius, 0, Math.PI * 2);
+                ctx.fillStyle = config.foodPheromoneColor;
+                ctx.fill();
+            }
+            
+            // Draw home pheromones
+            for (const pheromone of homePheromones) {
+                const radius = pheromone.intensity * 5;
+                ctx.beginPath();
+                ctx.arc(pheromone.x, pheromone.y, radius, 0, Math.PI * 2);
+                ctx.fillStyle = config.homePheromoneColor;
+                ctx.fill();
+            }
+            
+            // Draw danger pheromones
+            for (const pheromone of dangerPheromones) {
+                const radius = pheromone.intensity * 7;
+                ctx.beginPath();
+                ctx.arc(pheromone.x, pheromone.y, radius, 0, Math.PI * 2);
+                ctx.fillStyle = config.dangerPheromoneColor;
+                ctx.fill();
+            }
+        }
+
+        // Render food
+        function renderFood() {
+            for (const f of food) {
+                const radius = 2 + f.amount * 0.5;
+                ctx.beginPath();
+                ctx.arc(f.x, f.y, radius, 0, Math.PI * 2);
+                ctx.fillStyle = config.foodColor;
+                ctx.fill();
+            }
+        }
+
+        // Render obstacles
+        function renderObstacles() {
+            for (const obstacle of obstacles) {
+                ctx.beginPath();
+                ctx.arc(obstacle.x, obstacle.y, obstacle.radius, 0, Math.PI * 2);
+                ctx.fillStyle = config.obstacleColor;
+                ctx.fill();
+            }
+        }
+
+        // Render nest
+        function renderNest() {
+            ctx.beginPath();
+            ctx.arc(nest.x, nest.y, nest.radius, 0, Math.PI * 2);
+            ctx.fillStyle = config.nestColor;
+            ctx.fill();
+            
+            // Draw nest entrance
+            ctx.beginPath();
+            ctx.arc(nest.x, nest.y, nest.radius * 0.7, 0, Math.PI * 2);
+            ctx.fillStyle = '#804000';
+            ctx.fill();
+            
+            // Draw food storage indicator
+            const foodLevel = Math.min(foodStored / 200, 1);
+            ctx.beginPath();
+            ctx.arc(nest.x, nest.y, nest.radius * 0.4, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(255, 255, 0, ${foodLevel * 0.7})`;
+            ctx.fill();
+        }
+
+        // Render queen
+        function renderQueen() {
+            ctx.beginPath();
+            ctx.arc(queen.x, queen.y, queen.size, 0, Math.PI * 2);
+            ctx.fillStyle = '#B8860B';
+            ctx.fill();
+            
+            // Draw queen health indicator
+            const healthColor = queen.health > 50 ? 
+                `rgba(0, 255, 0, ${queen.health / 100})` : 
+                `rgba(255, ${Math.floor(queen.health * 5.1)}, 0, ${queen.health / 100})`;
+            
+            ctx.beginPath();
+            ctx.arc(queen.x, queen.y, queen.size * 0.7, 0, Math.PI * 2);
+            ctx.fillStyle = healthColor;
+            ctx.fill();
+        }
+
+        // Render ants
+        function renderAnts() {
+            for (const ant of ants) {
+                // Draw ant body
+                ctx.beginPath();
+                ctx.arc(ant.x, ant.y, config.antSize, 0, Math.PI * 2);
+                
+                if (ant.type === 'worker') {
+                    ctx.fillStyle = ant.carryingFood ? '#FFA500' : '#8B4513';
+                } else if (ant.type === 'soldier') {
+                    ctx.fillStyle = '#A52A2A';
+                }
+                
+                ctx.fill();
+                
+                // Draw direction indicator
+                const headX = ant.x + Math.cos(ant.angle) * config.antSize * 1.5;
+                const headY = ant.y + Math.sin(ant.angle) * config.antSize * 1.5;
+                
+                ctx.beginPath();
+                ctx.moveTo(ant.x, ant.y);
+                ctx.lineTo(headX, headY);
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                
+                // Draw food if carrying
+                if (ant.carryingFood) {
+                    ctx.beginPath();
+                    ctx.arc(headX, headY, 2, 0, Math.PI * 2);
+                    ctx.fillStyle = config.foodColor;
+                    ctx.fill();
+                }
+            }
+        }
+
+        // Render larvae
+        function renderLarvae() {
+            for (const larva of larvae) {
+                // Draw larva body
+                ctx.beginPath();
+                ctx.arc(larva.x, larva.y, 2, 0, Math.PI * 2);
+                ctx.fillStyle = larva.type === 'worker' ? '#FFC0CB' : '#FFB6C1';
+                ctx.fill();
+                
+                // Draw growth indicator
+                const growthPercent = larva.age / config.antMaturationTime;
+                ctx.beginPath();
+                ctx.arc(larva.x, larva.y, 2 * growthPercent, 0, Math.PI * 2);
+                ctx.strokeStyle = '#FFF';
+                ctx.lineWidth = 0.5;
+                ctx.stroke();
+            }
+        }
+
+        // Render predators
+        function renderPredators() {
+            for (const predator of predators) {
+                // Draw predator body
+                ctx.beginPath();
+                ctx.arc(predator.x, predator.y, predator.size, 0, Math.PI * 2);
+                ctx.fillStyle = '#000';
+                ctx.fill();
+                
+                // Draw eyes
+                const eyeAngle1 = predator.angle + Math.PI / 4;
+                const eyeAngle2 = predator.angle - Math.PI / 4;
+                const eyeDistance = predator.size * 0.7;
+                
+                const eye1X = predator.x + Math.cos(eyeAngle1) * eyeDistance;
+                const eye1Y = predator.y + Math.sin(eyeAngle1) * eyeDistance;
+                const eye2X = predator.x + Math.cos(eyeAngle2) * eyeDistance;
+                const eye2Y = predator.y + Math.sin(eyeAngle2) * eyeDistance;
+                
+                ctx.beginPath();
+                ctx.arc(eye1X, eye1Y, predator.size * 0.3, 0, Math.PI * 2);
+                ctx.fillStyle = 'red';
+                ctx.fill();
+                
+                ctx.beginPath();
+                ctx.arc(eye2X, eye2Y, predator.size * 0.3, 0, Math.PI * 2);
+                ctx.fillStyle = 'red';
+                ctx.fill();
+                
+                // Draw health indicator
+                ctx.beginPath();
+                ctx.rect(predator.x - predator.size, predator.y - predator.size - 5, predator.size * 2, 3);
+                ctx.fillStyle = '#FFF';
+                ctx.fill();
+                
+                ctx.beginPath();
+                ctx.rect(predator.x - predator.size, predator.y - predator.size - 5, predator.size * 2 * (predator.health / 100), 3);
+                ctx.fillStyle = 'red';
+                ctx.fill();
+            }
+        }
+
+        // Initialize and start the simulation
+        window.onload = function() {
+            init();
+        };
+    </script>
+</body>
+</html>
